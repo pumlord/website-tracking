@@ -29,15 +29,15 @@ jobs:
       run: |
         cp config.template.json config.json
         # Replace webhook URL with secret using Python for safer string replacement
-        python -c "
-import json
-import os
-with open('config.json', 'r') as f:
-    config = json.load(f)
-config['notification']['discord_webhook_url'] = os.environ['DISCORD_WEBHOOK_URL']
-with open('config.json', 'w') as f:
-    json.dump(config, f, indent=4)
-"
+        python3 << 'EOF'
+        import json
+        import os
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+        config['notification']['discord_webhook_url'] = os.environ['DISCORD_WEBHOOK_URL']
+        with open('config.json', 'w') as f:
+            json.dump(config, f, indent=4)
+        EOF
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       
