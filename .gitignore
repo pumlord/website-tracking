@@ -35,8 +35,7 @@ ENV/
 *.swo
 *~
 
-# Website tracking data
-website_data.json
+# Website tracking logs (but allow website_data.json to be tracked)
 website_tracker.log
 *.log
 
