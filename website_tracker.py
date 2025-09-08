@@ -275,6 +275,126 @@ This is an automated message from your Website Tracker.
         except Exception as e:
             logger.error(f"Error sending email notification: {e}")
 
+    def send_heartbeat_notification(self):
+        """
+        Send a heartbeat notification to confirm the tracker is running.
+        """
+        try:
+            notification_type = self.config['notification'].get('type', 'discord')
+
+            if notification_type == 'discord':
+                self.send_discord_heartbeat()
+            elif notification_type == 'email':
+                self.send_email_heartbeat()
+            else:
+                logger.error(f"Unknown notification type: {notification_type}")
+
+        except Exception as e:
+            logger.error(f"Error sending heartbeat notification: {e}")
+
+    def send_discord_heartbeat(self):
+        """
+        Send Discord heartbeat notification.
+        """
+        try:
+            webhook_url = self.config['notification'].get('discord_webhook_url')
+
+            if not webhook_url:
+                logger.error("Discord webhook URL not configured")
+                return
+
+            # Create Discord embed for heartbeat
+            embed = {
+                "title": "✅ Website Tracker Heartbeat",
+                "description": f"**Monitoring {len(self.config['urls'])} websites**",
+                "color": 0x0099ff,  # Blue color
+                "timestamp": datetime.now().isoformat(),
+                "fields": [
+                    {
+                        "name": "📊 Status",
+                        "value": "All systems operational",
+                        "inline": True
+                    },
+                    {
+                        "name": "🌐 Websites Monitored",
+                        "value": str(len(self.config['urls'])),
+                        "inline": True
+                    },
+                    {
+                        "name": "⏰ Next Check",
+                        "value": "In 1 hour",
+                        "inline": True
+                    }
+                ],
+                "footer": {
+                    "text": "Website Tracker Bot • Heartbeat"
+                }
+            }
+
+            # Prepare Discord webhook payload
+            payload = {
+                "embeds": [embed]
+            }
+
+            # Send to Discord
+            response = requests.post(webhook_url, json=payload)
+            response.raise_for_status()
+
+            logger.info("Discord heartbeat notification sent")
+
+        except Exception as e:
+            logger.error(f"Error sending Discord heartbeat: {e}")
+
+    def send_email_heartbeat(self):
+        """
+        Send email heartbeat notification.
+        """
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+
+            email_config = self.config['notification']['email']
+
+            if not email_config.get('sender_email') or not email_config.get('sender_password'):
+                logger.error("Email credentials not configured")
+                return
+
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = email_config['sender_email']
+            msg['To'] = email_config['recipient_email']
+            msg['Subject'] = "Website Tracker Heartbeat - System Running"
+
+            # Create email body
+            body = f"""
+Website Tracker Heartbeat
+
+✅ System Status: Operational
+🌐 Websites Monitored: {len(self.config['urls'])}
+⏰ Check Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📅 Next Check: In 1 hour
+
+All systems are running normally. No changes detected in this check cycle.
+
+This is an automated heartbeat message from your Website Tracker.
+"""
+
+            msg.attach(MIMEText(body, 'plain'))
+
+            # Send email
+            server = smtplib.SMTP(email_config['smtp_server'], email_config['smtp_port'])
+            server.starttls()
+            server.login(email_config['sender_email'], email_config['sender_password'])
+            text = msg.as_string()
+            server.sendmail(email_config['sender_email'], email_config['recipient_email'], text)
+            server.quit()
+
+            logger.info("Email heartbeat notification sent")
+
+        except Exception as e:
+            logger.error(f"Error sending email heartbeat: {e}")
+
     def send_notification(self, changed_urls: List[str]):
         """
         Send notification about changed websites using configured method.

@@ -14,11 +14,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def run_single_check(tracker: WebsiteTracker):
+def run_single_check(tracker: WebsiteTracker, send_heartbeat: bool = False):
     """Run a single check of all websites."""
     print("Running single website check...")
     changed_urls = tracker.track_websites()
-    
+
     if changed_urls:
         print(f"\n✓ Changes detected in {len(changed_urls)} website(s):")
         for url in changed_urls:
@@ -30,7 +30,17 @@ def run_single_check(tracker: WebsiteTracker):
             print(f"\nEmail notification sent to {tracker.config['notification']['email']['recipient_email']}")
     else:
         print("\n✓ No changes detected in any tracked websites.")
-    
+
+        # Send heartbeat notification if requested and no changes detected
+        if send_heartbeat:
+            print("Sending heartbeat notification...")
+            tracker.send_heartbeat_notification()
+            notification_type = tracker.config['notification'].get('type', 'discord')
+            if notification_type == 'discord':
+                print("✓ Discord heartbeat notification sent")
+            else:
+                print("✓ Email heartbeat notification sent")
+
     return len(changed_urls)
 
 def run_continuous_monitoring(tracker: WebsiteTracker):
@@ -108,6 +118,7 @@ def main():
         epilog="""
 Examples:
   python main.py --check                    # Run single check
+  python main.py --check --heartbeat        # Run single check with heartbeat notification
   python main.py --monitor                  # Start continuous monitoring
   python main.py --add-url https://example.com https://test.com
   python main.py --list-urls                # Show tracked URLs
@@ -123,6 +134,8 @@ Configuration:
                        help='Run a single check of all tracked websites')
     parser.add_argument('--monitor', action='store_true',
                        help='Start continuous monitoring (runs until stopped)')
+    parser.add_argument('--heartbeat', action='store_true',
+                       help='Send heartbeat notification along with check (useful for scheduled runs)')
     
     # URL management
     parser.add_argument('--add-url', nargs='+', metavar='URL',
@@ -153,7 +166,7 @@ Configuration:
         
         # Execute requested action
         if args.check:
-            run_single_check(tracker)
+            run_single_check(tracker, send_heartbeat=args.heartbeat)
         
         elif args.monitor:
             run_continuous_monitoring(tracker)

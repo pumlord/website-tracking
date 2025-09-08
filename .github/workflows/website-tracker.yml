@@ -50,7 +50,7 @@ jobs:
     
     - name: Run website tracking
       run: |
-        python main.py --check
+        python main.py --check --heartbeat
     
     - name: Commit and push tracking data
       run: |
