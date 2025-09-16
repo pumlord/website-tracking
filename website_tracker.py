@@ -192,6 +192,27 @@ class WebsiteTracker:
         normalized = re.sub(r'[?&]ga_[^&=]*=[^&]*', '', normalized)
         normalized = re.sub(r'[?&]fbclid=[^&]*', '', normalized)
 
+        # Additional aggressive patterns for gambling sites
+        # Remove any numbers that might be dynamic counters, IDs, or amounts
+        normalized = re.sub(r'\b\d{4,}\b', '[NUMBER]', normalized)  # Any 4+ digit numbers
+
+        # Remove common gambling site dynamic elements
+        normalized = re.sub(r'data-[a-zA-Z-]+=[\'""][^\'""]*[\'""]', 'data-attr="[DATA]"', normalized)
+        normalized = re.sub(r'class=[\'""][^\'""]*[\'""]', 'class="[CLASS]"', normalized)
+        normalized = re.sub(r'style=[\'""][^\'""]*[\'""]', 'style="[STYLE]"', normalized)
+
+        # Remove script content that might contain dynamic data
+        normalized = re.sub(r'<script[^>]*>.*?</script>', '<script>[SCRIPT]</script>', normalized, flags=re.DOTALL)
+
+        # Remove any JSON-like data structures
+        normalized = re.sub(r'\{[^{}]*\}', '{[JSON]}', normalized)
+
+        # Remove query parameters entirely
+        normalized = re.sub(r'\?[^"\s<>]*', '', normalized)
+
+        # Remove hash fragments
+        normalized = re.sub(r'#[^"\s<>]*', '', normalized)
+
         # Remove whitespace variations
         normalized = re.sub(r'\s+', ' ', normalized)
         normalized = normalized.strip()
@@ -257,7 +278,8 @@ class WebsiteTracker:
                 'last_checked': datetime.now().isoformat(),
                 'last_changed': 'Never',  # Changed from datetime to 'Never' for first run
                 'content_length': len(content),
-                'check_count': 1
+                'check_count': 1,
+                'last_content': content[:5000]  # Store first 5KB for comparison
             }
             logger.info(f"First time tracking {url} - baseline established (hash: {current_hash[:8]}...)")
             return False
@@ -271,13 +293,25 @@ class WebsiteTracker:
         logger.debug(f"Content length: {len(content)} bytes")
 
         if current_hash != stored_hash:
-            # Content has actually changed
+            # Content has actually changed - let's debug what changed
             self.website_data[url]['hash'] = current_hash
             self.website_data[url]['last_changed'] = datetime.now().isoformat()
 
-            logger.info(f"✅ REAL CHANGE detected for {url}")
+            logger.info(f"✅ CHANGE detected for {url}")
             logger.info(f"   Hash changed: {stored_hash[:8]}... → {current_hash[:8]}...")
             logger.info(f"   Content length: {len(content)} bytes")
+
+            # Get stored content for comparison (if we have it)
+            if 'last_content' in self.website_data[url]:
+                diff_sample = self.get_content_diff_sample(
+                    self.website_data[url]['last_content'],
+                    content
+                )
+                logger.info(f"   Content diff sample:\n{diff_sample}")
+
+            # Store current content for next comparison
+            self.website_data[url]['last_content'] = content[:5000]  # Store first 5KB for comparison
+
             return True
 
         logger.info(f"No changes detected for {url} (check #{self.website_data[url]['check_count']})")
