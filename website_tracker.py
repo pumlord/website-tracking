@@ -172,9 +172,14 @@ class WebsiteTracker:
         try:
             webhook_url = self.config['notification'].get('discord_webhook_url')
 
-            if not webhook_url:
-                logger.error("Discord webhook URL not configured")
-                return
+            if not webhook_url or webhook_url == "YOUR_DISCORD_WEBHOOK_URL_HERE":
+                logger.error("Discord webhook URL not configured properly")
+                return False
+
+            # Validate webhook URL format
+            if not webhook_url.startswith('https://discord.com/api/webhooks/'):
+                logger.error(f"Invalid Discord webhook URL format: {webhook_url[:50]}...")
+                return False
 
             # Create Discord embed
             embed = {
@@ -206,17 +211,37 @@ class WebsiteTracker:
 
             # Prepare Discord webhook payload
             payload = {
+                "content": f"🚨 **{len(changed_urls)} website(s) changed!**",
                 "embeds": [embed]
             }
 
-            # Send to Discord
-            response = requests.post(webhook_url, json=payload)
-            response.raise_for_status()
+            # Send to Discord with timeout and better error handling
+            logger.info(f"Sending Discord notification to webhook: {webhook_url[:50]}...")
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                timeout=30,
+                headers={'Content-Type': 'application/json'}
+            )
 
-            logger.info(f"Discord notification sent for {len(changed_urls)} changed websites")
+            logger.info(f"Discord API response: {response.status_code}")
 
+            if response.status_code == 204:
+                logger.info(f"✅ Discord notification sent successfully for {len(changed_urls)} changed websites")
+                return True
+            else:
+                logger.error(f"Discord API error: {response.status_code} - {response.text}")
+                return False
+
+        except requests.exceptions.Timeout:
+            logger.error("Discord notification timeout - webhook took too long to respond")
+            return False
+        except requests.exceptions.ConnectionError:
+            logger.error("Discord notification connection error - check internet connection")
+            return False
         except Exception as e:
             logger.error(f"Error sending Discord notification: {e}")
+            return False
 
     def send_email_notification(self, changed_urls: List[str]):
         """
@@ -299,14 +324,19 @@ This is an automated message from your Website Tracker.
         try:
             webhook_url = self.config['notification'].get('discord_webhook_url')
 
-            if not webhook_url:
-                logger.error("Discord webhook URL not configured")
-                return
+            if not webhook_url or webhook_url == "YOUR_DISCORD_WEBHOOK_URL_HERE":
+                logger.error("Discord webhook URL not configured properly")
+                return False
+
+            # Validate webhook URL format
+            if not webhook_url.startswith('https://discord.com/api/webhooks/'):
+                logger.error(f"Invalid Discord webhook URL format: {webhook_url[:50]}...")
+                return False
 
             # Create Discord embed for heartbeat
             embed = {
                 "title": "✅ Website Tracker Heartbeat",
-                "description": f"**Monitoring {len(self.config['urls'])} websites**",
+                "description": f"**Monitoring {len(self.config['urls'])} websites - No changes detected**",
                 "color": 0x0099ff,  # Blue color
                 "timestamp": datetime.now().isoformat(),
                 "fields": [
@@ -331,19 +361,58 @@ This is an automated message from your Website Tracker.
                 }
             }
 
+            # Add some example URLs being monitored
+            if self.config.get('urls'):
+                url_list = []
+                for i, url in enumerate(self.config['urls'][:5]):
+                    # Shorten URLs for display
+                    display_url = url.replace('https://www.', '').replace('https://', '')
+                    if len(display_url) > 50:
+                        display_url = display_url[:47] + '...'
+                    url_list.append(f"• {display_url}")
+
+                if len(self.config['urls']) > 5:
+                    url_list.append(f"• ... and {len(self.config['urls']) - 5} more")
+
+                embed["fields"].append({
+                    "name": "📋 Sample Monitored Sites",
+                    "value": "\n".join(url_list),
+                    "inline": False
+                })
+
             # Prepare Discord webhook payload
             payload = {
+                "content": "💙 **Heartbeat** - All systems running normally",
                 "embeds": [embed]
             }
 
-            # Send to Discord
-            response = requests.post(webhook_url, json=payload)
-            response.raise_for_status()
+            # Send to Discord with timeout and better error handling
+            logger.info(f"Sending Discord heartbeat to webhook: {webhook_url[:50]}...")
+            response = requests.post(
+                webhook_url,
+                json=payload,
+                timeout=30,
+                headers={'Content-Type': 'application/json'}
+            )
 
-            logger.info("Discord heartbeat notification sent")
+            logger.info(f"Discord heartbeat API response: {response.status_code}")
 
+            if response.status_code == 204:
+                logger.info("✅ Discord heartbeat notification sent successfully")
+                return True
+            else:
+                logger.error(f"Discord heartbeat API error: {response.status_code} - {response.text}")
+                return False
+
+        except requests.exceptions.Timeout:
+            logger.error("Discord heartbeat timeout - webhook took too long to respond")
+            return False
+        except requests.exceptions.ConnectionError:
+            logger.error("Discord heartbeat connection error - check internet connection")
+            return False
         except Exception as e:
             logger.error(f"Error sending Discord heartbeat: {e}")
+            return False
 
     def send_email_heartbeat(self):
         """

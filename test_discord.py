@@ -58,13 +58,32 @@ def test_discord_webhook():
     try:
         # Send to Discord
         print("Sending test notification to Discord...")
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status()
-        
-        print("✅ Success! Discord notification sent successfully!")
-        print("Check your Discord channel for the test message.")
-        return True
-        
+        print(f"Webhook URL: {webhook_url[:50]}...")
+
+        response = requests.post(
+            webhook_url,
+            json=payload,
+            timeout=30,
+            headers={'Content-Type': 'application/json'}
+        )
+
+        print(f"Response status code: {response.status_code}")
+
+        if response.status_code == 204:
+            print("✅ Success! Discord notification sent successfully!")
+            print("Check your Discord channel for the test message.")
+            return True
+        else:
+            print(f"❌ Discord API returned status {response.status_code}")
+            print(f"Response text: {response.text}")
+            return False
+
+    except requests.exceptions.Timeout:
+        print("❌ Request timeout - Discord webhook took too long to respond")
+        return False
+    except requests.exceptions.ConnectionError:
+        print("❌ Connection error - check your internet connection")
+        return False
     except Exception as e:
         print(f"❌ Error sending Discord notification: {e}")
         return False
