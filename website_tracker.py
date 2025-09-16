@@ -116,50 +116,104 @@ class WebsiteTracker:
             logger.error(f"Error fetching {url}: {e}")
             return None
     
+    def normalize_content(self, content: str) -> str:
+        """
+        Normalize content by removing dynamic elements that change frequently.
+        """
+        import re
+
+        # Remove common dynamic content patterns
+        normalized = content
+
+        # Remove timestamps (various formats)
+        normalized = re.sub(r'\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}[.\d]*[Z]?', '[TIMESTAMP]', normalized)
+        normalized = re.sub(r'\d{1,2}/\d{1,2}/\d{4}', '[DATE]', normalized)
+        normalized = re.sub(r'\d{1,2}-\d{1,2}-\d{4}', '[DATE]', normalized)
+
+        # Remove session IDs and tokens
+        normalized = re.sub(r'sessionid=[a-zA-Z0-9]+', 'sessionid=[SESSION]', normalized)
+        normalized = re.sub(r'token=[a-zA-Z0-9]+', 'token=[TOKEN]', normalized)
+        normalized = re.sub(r'csrf[_-]?token["\']?\s*[:=]\s*["\']?[a-zA-Z0-9]+', 'csrf_token=[TOKEN]', normalized)
+
+        # Remove cache busters and version numbers
+        normalized = re.sub(r'[?&]v=\d+', '', normalized)
+        normalized = re.sub(r'[?&]_=\d+', '', normalized)
+        normalized = re.sub(r'[?&]t=\d+', '', normalized)
+
+        # Remove random IDs and UUIDs
+        normalized = re.sub(r'id="[a-zA-Z0-9-]{8,}"', 'id="[RANDOM_ID]"', normalized)
+        normalized = re.sub(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', '[UUID]', normalized)
+
+        # Remove nonce values
+        normalized = re.sub(r'nonce=["\']?[a-zA-Z0-9+/=]+["\']?', 'nonce="[NONCE]"', normalized)
+
+        # Remove current time indicators
+        normalized = re.sub(r'Last updated:?\s*[^<\n]+', 'Last updated: [TIME]', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'Generated at:?\s*[^<\n]+', 'Generated at: [TIME]', normalized, flags=re.IGNORECASE)
+
+        # Remove whitespace variations
+        normalized = re.sub(r'\s+', ' ', normalized)
+        normalized = normalized.strip()
+
+        return normalized
+
     def calculate_content_hash(self, content: str) -> str:
-        """Calculate MD5 hash of content."""
-        return hashlib.md5(content.encode('utf-8')).hexdigest()
+        """Calculate MD5 hash of normalized content."""
+        normalized_content = self.normalize_content(content)
+        return hashlib.md5(normalized_content.encode('utf-8')).hexdigest()
     
     def check_website_changes(self, url: str) -> bool:
         """
         Check if a website has changed.
-        
+
         Args:
             url: The URL to check
-            
+
         Returns:
             True if changed, False otherwise
         """
         logger.info(f"Checking {url}")
-        
+
         content = self.get_website_content(url)
         if content is None:
             logger.warning(f"Could not fetch content for {url}")
             return False
-        
+
+        # Calculate hash of normalized content
         current_hash = self.calculate_content_hash(content)
-        
+        logger.debug(f"Current hash for {url}: {current_hash}")
+
         if url not in self.website_data:
-            # First time checking this URL
+            # First time checking this URL - establish baseline
             self.website_data[url] = {
                 'hash': current_hash,
                 'last_checked': datetime.now().isoformat(),
-                'last_changed': datetime.now().isoformat()
+                'last_changed': 'Never',  # Changed from datetime to 'Never' for first run
+                'content_length': len(content),
+                'check_count': 1
             }
-            logger.info(f"First time tracking {url}")
+            logger.info(f"First time tracking {url} - baseline established (hash: {current_hash[:8]}...)")
             return False
-        
+
         stored_hash = self.website_data[url]['hash']
         self.website_data[url]['last_checked'] = datetime.now().isoformat()
-        
+        self.website_data[url]['check_count'] = self.website_data[url].get('check_count', 0) + 1
+        self.website_data[url]['content_length'] = len(content)
+
+        logger.debug(f"Stored hash for {url}: {stored_hash}")
+        logger.debug(f"Content length: {len(content)} bytes")
+
         if current_hash != stored_hash:
-            # Content has changed
+            # Content has actually changed
             self.website_data[url]['hash'] = current_hash
             self.website_data[url]['last_changed'] = datetime.now().isoformat()
-            logger.info(f"Change detected for {url}")
+
+            logger.info(f"✅ REAL CHANGE detected for {url}")
+            logger.info(f"   Hash changed: {stored_hash[:8]}... → {current_hash[:8]}...")
+            logger.info(f"   Content length: {len(content)} bytes")
             return True
-        
-        logger.info(f"No changes detected for {url}")
+
+        logger.info(f"No changes detected for {url} (check #{self.website_data[url]['check_count']})")
         return False
     
     def send_discord_notification(self, changed_urls: List[str]):
@@ -196,9 +250,13 @@ class WebsiteTracker:
             # Add changed URLs as fields
             for i, url in enumerate(changed_urls[:10]):  # Limit to 10 URLs to avoid Discord limits
                 last_changed = self.website_data[url].get('last_changed', 'Unknown')
+                check_count = self.website_data[url].get('check_count', 0)
+                content_length = self.website_data[url].get('content_length', 0)
+
+                # Show more detailed information
                 embed["fields"].append({
                     "name": f"🌐 Website {i+1}",
-                    "value": f"**URL:** {url}\n**Changed:** {last_changed}",
+                    "value": f"**URL:** {url}\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}",
                     "inline": False
                 })
 

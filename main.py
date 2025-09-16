@@ -148,7 +148,9 @@ Configuration:
     # Status and info
     parser.add_argument('--status', action='store_true',
                        help='Show detailed tracking status')
-    
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug logging for detailed change detection info')
+
     # Configuration
     parser.add_argument('--config', default='config.json',
                        help='Path to configuration file (default: config.json)')
@@ -161,6 +163,12 @@ Configuration:
         sys.exit(1)
     
     try:
+        # Set debug logging if requested
+        if args.debug:
+            import logging
+            logging.getLogger().setLevel(logging.DEBUG)
+            print("🔧 Debug logging enabled")
+
         # Initialize tracker
         tracker = WebsiteTracker(args.config)
         
