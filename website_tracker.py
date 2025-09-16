@@ -119,37 +119,78 @@ class WebsiteTracker:
     def normalize_content(self, content: str) -> str:
         """
         Normalize content by removing dynamic elements that change frequently.
+        Enhanced for gambling/promotional sites with additional dynamic content patterns.
         """
         import re
 
         # Remove common dynamic content patterns
         normalized = content
 
-        # Remove timestamps (various formats)
+        # Remove timestamps (various formats) - Enhanced patterns
         normalized = re.sub(r'\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}[.\d]*[Z]?', '[TIMESTAMP]', normalized)
         normalized = re.sub(r'\d{1,2}/\d{1,2}/\d{4}', '[DATE]', normalized)
         normalized = re.sub(r'\d{1,2}-\d{1,2}-\d{4}', '[DATE]', normalized)
+        normalized = re.sub(r'\d{1,2}\.\d{1,2}\.\d{4}', '[DATE]', normalized)
 
-        # Remove session IDs and tokens
+        # Remove time-only patterns (HH:MM:SS, HH:MM)
+        normalized = re.sub(r'\b\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM|am|pm)?\b', '[TIME]', normalized)
+
+        # Remove Unix timestamps and epoch times
+        normalized = re.sub(r'\b\d{10,13}\b', '[TIMESTAMP]', normalized)
+
+        # Remove session IDs and tokens - Enhanced
         normalized = re.sub(r'sessionid=[a-zA-Z0-9]+', 'sessionid=[SESSION]', normalized)
         normalized = re.sub(r'token=[a-zA-Z0-9]+', 'token=[TOKEN]', normalized)
         normalized = re.sub(r'csrf[_-]?token["\']?\s*[:=]\s*["\']?[a-zA-Z0-9]+', 'csrf_token=[TOKEN]', normalized)
+        normalized = re.sub(r'auth[_-]?token["\']?\s*[:=]\s*["\']?[a-zA-Z0-9]+', 'auth_token=[TOKEN]', normalized)
 
-        # Remove cache busters and version numbers
+        # Remove cache busters and version numbers - Enhanced
         normalized = re.sub(r'[?&]v=\d+', '', normalized)
         normalized = re.sub(r'[?&]_=\d+', '', normalized)
         normalized = re.sub(r'[?&]t=\d+', '', normalized)
+        normalized = re.sub(r'[?&]cb=\d+', '', normalized)
+        normalized = re.sub(r'[?&]cache=\d+', '', normalized)
+        normalized = re.sub(r'[?&]timestamp=\d+', '', normalized)
 
-        # Remove random IDs and UUIDs
+        # Remove random IDs and UUIDs - Enhanced
         normalized = re.sub(r'id="[a-zA-Z0-9-]{8,}"', 'id="[RANDOM_ID]"', normalized)
         normalized = re.sub(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', '[UUID]', normalized)
+        normalized = re.sub(r'data-id="[a-zA-Z0-9-]+"', 'data-id="[DATA_ID]"', normalized)
 
-        # Remove nonce values
+        # Remove nonce values - Enhanced
         normalized = re.sub(r'nonce=["\']?[a-zA-Z0-9+/=]+["\']?', 'nonce="[NONCE]"', normalized)
+        normalized = re.sub(r'data-nonce=["\']?[a-zA-Z0-9+/=]+["\']?', 'data-nonce="[NONCE]"', normalized)
 
-        # Remove current time indicators
+        # Remove current time indicators - Enhanced
         normalized = re.sub(r'Last updated:?\s*[^<\n]+', 'Last updated: [TIME]', normalized, flags=re.IGNORECASE)
         normalized = re.sub(r'Generated at:?\s*[^<\n]+', 'Generated at: [TIME]', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'Current time:?\s*[^<\n]+', 'Current time: [TIME]', normalized, flags=re.IGNORECASE)
+
+        # Gambling/Promotional site specific patterns
+        # Remove live odds, jackpot amounts, player counts
+        normalized = re.sub(r'\$[\d,]+\.?\d*', '$[AMOUNT]', normalized)  # Dollar amounts
+        normalized = re.sub(r'RM\s*[\d,]+\.?\d*', 'RM[AMOUNT]', normalized)  # Malaysian Ringgit
+        normalized = re.sub(r'€[\d,]+\.?\d*', '€[AMOUNT]', normalized)  # Euro amounts
+        normalized = re.sub(r'£[\d,]+\.?\d*', '£[AMOUNT]', normalized)  # Pound amounts
+
+        # Remove player/user counts
+        normalized = re.sub(r'\b\d+\s*(players?|users?|online)\b', '[COUNT] players', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'\b(players?|users?|online):\s*\d+', 'players: [COUNT]', normalized, flags=re.IGNORECASE)
+
+        # Remove live statistics and counters
+        normalized = re.sub(r'\b\d+\s*(views?|clicks?|visits?)\b', '[COUNT] views', normalized, flags=re.IGNORECASE)
+
+        # Remove promotional countdown timers
+        normalized = re.sub(r'\b\d{1,2}[hms]\s*\d{0,2}[ms]?\s*\d{0,2}s?\b', '[COUNTDOWN]', normalized)
+
+        # Remove JavaScript timestamps and random values
+        normalized = re.sub(r'Date\.now\(\)', 'Date.now()', normalized)
+        normalized = re.sub(r'Math\.random\(\)', 'Math.random()', normalized)
+
+        # Remove analytics and tracking parameters
+        normalized = re.sub(r'[?&]utm_[^&=]*=[^&]*', '', normalized)
+        normalized = re.sub(r'[?&]ga_[^&=]*=[^&]*', '', normalized)
+        normalized = re.sub(r'[?&]fbclid=[^&]*', '', normalized)
 
         # Remove whitespace variations
         normalized = re.sub(r'\s+', ' ', normalized)
@@ -161,7 +202,33 @@ class WebsiteTracker:
         """Calculate MD5 hash of normalized content."""
         normalized_content = self.normalize_content(content)
         return hashlib.md5(normalized_content.encode('utf-8')).hexdigest()
-    
+
+    def get_content_diff_sample(self, old_content: str, new_content: str, max_chars: int = 500) -> str:
+        """
+        Get a sample of what changed between old and new content for debugging.
+        """
+        import difflib
+
+        # Normalize both contents
+        old_normalized = self.normalize_content(old_content)
+        new_normalized = self.normalize_content(new_content)
+
+        # If normalized content is the same, show raw difference sample
+        if old_normalized == new_normalized:
+            return "Content identical after normalization (false positive detected)"
+
+        # Get a diff sample
+        old_lines = old_normalized.split('\n')[:20]  # First 20 lines
+        new_lines = new_normalized.split('\n')[:20]  # First 20 lines
+
+        diff = list(difflib.unified_diff(old_lines, new_lines, lineterm='', n=2))
+        diff_text = '\n'.join(diff[:15])  # First 15 diff lines
+
+        if len(diff_text) > max_chars:
+            diff_text = diff_text[:max_chars] + "..."
+
+        return diff_text if diff_text else "No significant differences found"
+
     def check_website_changes(self, url: str) -> bool:
         """
         Check if a website has changed.
