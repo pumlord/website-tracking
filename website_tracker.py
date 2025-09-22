@@ -285,6 +285,161 @@ class WebsiteTracker:
 
         return diff_text if diff_text else "No significant differences found"
 
+    def create_content_snapshot(self, content: str, url: str, snapshot_type: str = "current") -> dict:
+        """
+        Create a snapshot of content for before/after comparison.
+
+        Args:
+            content: The HTML content to snapshot
+            url: The URL this content is from
+            snapshot_type: Type of snapshot ("before" or "after")
+
+        Returns:
+            Dict with snapshot information
+        """
+        from bs4 import BeautifulSoup
+        import re
+
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+
+            # Extract key content sections
+            snapshot = {
+                'type': snapshot_type,
+                'timestamp': datetime.now().isoformat(),
+                'url': url,
+                'content_length': len(content),
+                'sections': {}
+            }
+
+            # Extract main content areas
+            main_content = soup.find('main') or soup.find('article') or soup.find('div', class_=re.compile(r'content|main', re.I))
+            if main_content:
+                snapshot['sections']['main_content'] = main_content.get_text(strip=True)[:1000]
+
+            # Extract headings
+            headings = []
+            for tag in ['h1', 'h2', 'h3']:
+                for heading in soup.find_all(tag):
+                    headings.append(f"{tag.upper()}: {heading.get_text(strip=True)}")
+            snapshot['sections']['headings'] = headings[:10]  # First 10 headings
+
+            # Extract key text content (paragraphs)
+            paragraphs = []
+            for p in soup.find_all('p')[:5]:  # First 5 paragraphs
+                text = p.get_text(strip=True)
+                if len(text) > 20:  # Only meaningful paragraphs
+                    paragraphs.append(text[:200])  # First 200 chars
+            snapshot['sections']['paragraphs'] = paragraphs
+
+            # Extract any promotional/dynamic content
+            promo_selectors = [
+                'div[class*="promo"]', 'div[class*="offer"]', 'div[class*="bonus"]',
+                'div[class*="jackpot"]', 'div[class*="amount"]', 'span[class*="price"]'
+            ]
+            promo_content = []
+            for selector in promo_selectors:
+                elements = soup.select(selector)
+                for elem in elements[:3]:  # Max 3 per selector
+                    text = elem.get_text(strip=True)
+                    if text and len(text) > 5:
+                        promo_content.append(text[:100])
+            snapshot['sections']['promotional'] = promo_content
+
+            # Extract navigation/menu items
+            nav_items = []
+            nav = soup.find('nav') or soup.find('ul', class_=re.compile(r'menu|nav', re.I))
+            if nav:
+                for link in nav.find_all('a')[:10]:  # First 10 nav items
+                    text = link.get_text(strip=True)
+                    if text:
+                        nav_items.append(text)
+            snapshot['sections']['navigation'] = nav_items
+
+            return snapshot
+
+        except Exception as e:
+            logger.warning(f"Error creating content snapshot: {e}")
+            return {
+                'type': snapshot_type,
+                'timestamp': datetime.now().isoformat(),
+                'url': url,
+                'content_length': len(content),
+                'error': str(e),
+                'sections': {}
+            }
+
+    def compare_content_snapshots(self, before_snapshot: dict, after_snapshot: dict) -> str:
+        """
+        Compare two content snapshots and return a detailed diff report.
+
+        Args:
+            before_snapshot: Snapshot taken before the change
+            after_snapshot: Snapshot taken after the change
+
+        Returns:
+            Formatted string describing the differences
+        """
+        if not before_snapshot or not after_snapshot:
+            return "Unable to compare snapshots - missing data"
+
+        changes = []
+
+        # Compare content length
+        before_len = before_snapshot.get('content_length', 0)
+        after_len = after_snapshot.get('content_length', 0)
+        if before_len != after_len:
+            changes.append(f"📏 Content size: {before_len:,} → {after_len:,} bytes ({after_len-before_len:+,})")
+
+        # Compare sections
+        before_sections = before_snapshot.get('sections', {})
+        after_sections = after_snapshot.get('sections', {})
+
+        # Compare headings
+        before_headings = before_sections.get('headings', [])
+        after_headings = after_sections.get('headings', [])
+        if before_headings != after_headings:
+            changes.append("📋 Headings changed:")
+            # Show added/removed headings
+            added = set(after_headings) - set(before_headings)
+            removed = set(before_headings) - set(after_headings)
+            if added:
+                changes.append(f"   ➕ Added: {list(added)[:3]}")
+            if removed:
+                changes.append(f"   ➖ Removed: {list(removed)[:3]}")
+
+        # Compare main content
+        before_main = before_sections.get('main_content', '')
+        after_main = after_sections.get('main_content', '')
+        if before_main != after_main:
+            changes.append("📄 Main content changed:")
+            if len(before_main) > 0 and len(after_main) > 0:
+                # Show a snippet of the change
+                changes.append(f"   Before: {before_main[:100]}...")
+                changes.append(f"   After:  {after_main[:100]}...")
+            elif len(after_main) > len(before_main):
+                changes.append(f"   ➕ Content added: {after_main[:100]}...")
+            else:
+                changes.append(f"   ➖ Content removed: {before_main[:100]}...")
+
+        # Compare promotional content
+        before_promo = before_sections.get('promotional', [])
+        after_promo = after_sections.get('promotional', [])
+        if before_promo != after_promo:
+            changes.append("🎯 Promotional content changed:")
+            if after_promo:
+                changes.append(f"   Current: {after_promo[:2]}")
+            if before_promo:
+                changes.append(f"   Previous: {before_promo[:2]}")
+
+        # Compare paragraphs
+        before_paras = before_sections.get('paragraphs', [])
+        after_paras = after_sections.get('paragraphs', [])
+        if len(before_paras) != len(after_paras):
+            changes.append(f"📝 Paragraph count: {len(before_paras)} → {len(after_paras)}")
+
+        return '\n'.join(changes) if changes else "No significant structural changes detected"
+
     def _get_meta_change_details(self, old_meta: dict, new_meta: dict) -> str:
         """Get detailed information about what meta information changed."""
         changes = []
@@ -341,6 +496,7 @@ class WebsiteTracker:
 
         if url not in self.website_data:
             # First time checking this URL - establish baseline
+            baseline_snapshot = self.create_content_snapshot(content, url, "baseline")
             self.website_data[url] = {
                 'content_hash': current_content_hash,
                 'meta_hash': current_meta_hash,
@@ -349,7 +505,8 @@ class WebsiteTracker:
                 'last_changed': 'Never',
                 'content_length': len(content),
                 'check_count': 1,
-                'last_content': content[:5000]  # Store first 5KB for comparison
+                'last_content': content[:5000],  # Store first 5KB for comparison
+                'last_snapshot': baseline_snapshot  # Store content snapshot
             }
             logger.info(f"First time tracking {url} - baseline established")
             logger.info(f"   Content hash: {current_content_hash[:8]}...")
@@ -379,23 +536,36 @@ class WebsiteTracker:
         any_changed = meta_changed or content_changed
 
         if any_changed:
+            # Create current snapshot for comparison
+            current_snapshot = self.create_content_snapshot(content, url, "after")
+            before_snapshot = self.website_data[url].get('last_snapshot', {})
+
             # Update stored data
             self.website_data[url]['content_hash'] = current_content_hash
             self.website_data[url]['meta_hash'] = current_meta_hash
             self.website_data[url]['meta_info'] = meta_info
             self.website_data[url]['last_changed'] = datetime.now().isoformat()
             self.website_data[url]['last_content'] = content[:5000]
+            self.website_data[url]['last_snapshot'] = current_snapshot
 
             # Determine change type and create detailed message
             if meta_changed and content_changed:
                 change_type = "both_meta_and_content"
                 details = "Both meta information and page content changed"
+                # Add snapshot comparison for content changes
+                if before_snapshot:
+                    snapshot_diff = self.compare_content_snapshots(before_snapshot, current_snapshot)
+                    details += f"\n\n📸 Content Changes:\n{snapshot_diff}"
             elif meta_changed:
                 change_type = "meta_only"
                 details = self._get_meta_change_details(stored_meta_info, meta_info)
             else:
                 change_type = "content_only"
                 details = "Page content changed (meta unchanged)"
+                # Add detailed snapshot comparison for content-only changes
+                if before_snapshot:
+                    snapshot_diff = self.compare_content_snapshots(before_snapshot, current_snapshot)
+                    details += f"\n\n📸 Content Changes:\n{snapshot_diff}"
 
             logger.info(f"✅ CHANGE detected for {url}")
             logger.info(f"   Change type: {change_type}")
@@ -403,7 +573,7 @@ class WebsiteTracker:
             logger.info(f"   Content changed: {content_changed}")
             logger.info(f"   Details: {details}")
 
-            # Get content diff if we have stored content
+            # Get content diff if we have stored content (legacy diff for debugging)
             if content_changed and 'last_content' in self.website_data[url]:
                 diff_sample = self.get_content_diff_sample(
                     self.website_data[url]['last_content'],
@@ -416,7 +586,9 @@ class WebsiteTracker:
                 'meta_changed': meta_changed,
                 'content_changed': content_changed,
                 'change_type': change_type,
-                'details': details
+                'details': details,
+                'before_snapshot': before_snapshot,
+                'after_snapshot': current_snapshot
             }
 
         logger.info(f"No changes detected for {url} (check #{self.website_data[url]['check_count']})")
@@ -482,8 +654,25 @@ class WebsiteTracker:
                     emoji = "🌐"
                     change_desc = "Website changed"
 
-                # Show detailed information
-                field_value = f"**URL:** {url}\n**Type:** {change_desc}\n**Details:** {change_info['details'][:100]}...\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}"
+                # Show detailed information with snapshot data
+                details = change_info['details']
+
+                # Truncate details for Discord field limits, but keep snapshot info readable
+                if len(details) > 800:
+                    # Find a good break point to keep snapshot info intact
+                    if "📸 Content Changes:" in details:
+                        snapshot_start = details.find("📸 Content Changes:")
+                        if snapshot_start > 0:
+                            # Keep the first part and the snapshot comparison
+                            first_part = details[:min(400, snapshot_start)].strip()
+                            snapshot_part = details[snapshot_start:snapshot_start+400].strip()
+                            details = f"{first_part}\n\n{snapshot_part}..."
+                        else:
+                            details = details[:800] + "..."
+                    else:
+                        details = details[:800] + "..."
+
+                field_value = f"**URL:** {url}\n**Type:** {change_desc}\n**Details:** {details}\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}"
 
                 embed["fields"].append({
                     "name": f"{emoji} Website {i+1}",
