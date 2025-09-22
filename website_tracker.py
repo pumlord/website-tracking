@@ -219,10 +219,45 @@ class WebsiteTracker:
 
         return normalized
 
+    def extract_meta_info(self, content: str) -> dict:
+        """Extract meta information (title, description) from HTML content."""
+        from bs4 import BeautifulSoup
+
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+
+            # Extract title
+            title_tag = soup.find('title')
+            title = title_tag.get_text().strip() if title_tag else ""
+
+            # Extract meta description
+            meta_desc_tag = soup.find('meta', attrs={'name': 'description'})
+            if not meta_desc_tag:
+                meta_desc_tag = soup.find('meta', attrs={'property': 'og:description'})
+            description = meta_desc_tag.get('content', '').strip() if meta_desc_tag else ""
+
+            # Extract meta keywords
+            meta_keywords_tag = soup.find('meta', attrs={'name': 'keywords'})
+            keywords = meta_keywords_tag.get('content', '').strip() if meta_keywords_tag else ""
+
+            return {
+                'title': title,
+                'description': description,
+                'keywords': keywords
+            }
+        except Exception as e:
+            logger.warning(f"Error extracting meta info: {e}")
+            return {'title': '', 'description': '', 'keywords': ''}
+
     def calculate_content_hash(self, content: str) -> str:
         """Calculate MD5 hash of normalized content."""
         normalized_content = self.normalize_content(content)
         return hashlib.md5(normalized_content.encode('utf-8')).hexdigest()
+
+    def calculate_meta_hash(self, meta_info: dict) -> str:
+        """Calculate MD5 hash of meta information."""
+        meta_string = f"{meta_info['title']}|{meta_info['description']}|{meta_info['keywords']}"
+        return hashlib.md5(meta_string.encode('utf-8')).hexdigest()
 
     def get_content_diff_sample(self, old_content: str, new_content: str, max_chars: int = 500) -> str:
         """
@@ -250,79 +285,155 @@ class WebsiteTracker:
 
         return diff_text if diff_text else "No significant differences found"
 
-    def check_website_changes(self, url: str) -> bool:
+    def _get_meta_change_details(self, old_meta: dict, new_meta: dict) -> str:
+        """Get detailed information about what meta information changed."""
+        changes = []
+
+        if old_meta.get('title', '') != new_meta.get('title', ''):
+            changes.append(f"Title: '{old_meta.get('title', '')[:50]}...' → '{new_meta.get('title', '')[:50]}...'")
+
+        if old_meta.get('description', '') != new_meta.get('description', ''):
+            old_desc = old_meta.get('description', '')[:100]
+            new_desc = new_meta.get('description', '')[:100]
+            changes.append(f"Description: '{old_desc}...' → '{new_desc}...'")
+
+        if old_meta.get('keywords', '') != new_meta.get('keywords', ''):
+            changes.append(f"Keywords: '{old_meta.get('keywords', '')[:50]}...' → '{new_meta.get('keywords', '')[:50]}...'")
+
+        return "; ".join(changes) if changes else "Meta information changed"
+
+    def check_website_changes(self, url: str) -> dict:
         """
-        Check if a website has changed.
+        Check if a website has changed, distinguishing between meta and content changes.
 
         Args:
             url: The URL to check
 
         Returns:
-            True if changed, False otherwise
+            Dict with change information: {
+                'changed': bool,
+                'meta_changed': bool,
+                'content_changed': bool,
+                'change_type': str,
+                'details': str
+            }
         """
         logger.info(f"Checking {url}")
 
         content = self.get_website_content(url)
         if content is None:
             logger.warning(f"Could not fetch content for {url}")
-            return False
+            return {
+                'changed': False,
+                'meta_changed': False,
+                'content_changed': False,
+                'change_type': 'error',
+                'details': 'Could not fetch content'
+            }
 
-        # Calculate hash of normalized content
-        current_hash = self.calculate_content_hash(content)
-        logger.debug(f"Current hash for {url}: {current_hash}")
+        # Extract meta information and calculate hashes
+        meta_info = self.extract_meta_info(content)
+        current_content_hash = self.calculate_content_hash(content)
+        current_meta_hash = self.calculate_meta_hash(meta_info)
+
+        logger.debug(f"Current content hash for {url}: {current_content_hash}")
+        logger.debug(f"Current meta hash for {url}: {current_meta_hash}")
 
         if url not in self.website_data:
             # First time checking this URL - establish baseline
             self.website_data[url] = {
-                'hash': current_hash,
+                'content_hash': current_content_hash,
+                'meta_hash': current_meta_hash,
+                'meta_info': meta_info,
                 'last_checked': datetime.now().isoformat(),
-                'last_changed': 'Never',  # Changed from datetime to 'Never' for first run
+                'last_changed': 'Never',
                 'content_length': len(content),
                 'check_count': 1,
                 'last_content': content[:5000]  # Store first 5KB for comparison
             }
-            logger.info(f"First time tracking {url} - baseline established (hash: {current_hash[:8]}...)")
-            return False
+            logger.info(f"First time tracking {url} - baseline established")
+            logger.info(f"   Content hash: {current_content_hash[:8]}...")
+            logger.info(f"   Meta hash: {current_meta_hash[:8]}...")
+            logger.info(f"   Title: {meta_info['title'][:50]}...")
+            return {
+                'changed': False,
+                'meta_changed': False,
+                'content_changed': False,
+                'change_type': 'first_time',
+                'details': 'Baseline established'
+            }
 
-        stored_hash = self.website_data[url]['hash']
+        # Get stored hashes
+        stored_content_hash = self.website_data[url].get('content_hash', '')
+        stored_meta_hash = self.website_data[url].get('meta_hash', '')
+        stored_meta_info = self.website_data[url].get('meta_info', {})
+
+        # Update tracking info
         self.website_data[url]['last_checked'] = datetime.now().isoformat()
         self.website_data[url]['check_count'] = self.website_data[url].get('check_count', 0) + 1
         self.website_data[url]['content_length'] = len(content)
 
-        logger.debug(f"Stored hash for {url}: {stored_hash}")
-        logger.debug(f"Content length: {len(content)} bytes")
+        # Check for changes
+        meta_changed = current_meta_hash != stored_meta_hash
+        content_changed = current_content_hash != stored_content_hash
+        any_changed = meta_changed or content_changed
 
-        if current_hash != stored_hash:
-            # Content has actually changed - let's debug what changed
-            self.website_data[url]['hash'] = current_hash
+        if any_changed:
+            # Update stored data
+            self.website_data[url]['content_hash'] = current_content_hash
+            self.website_data[url]['meta_hash'] = current_meta_hash
+            self.website_data[url]['meta_info'] = meta_info
             self.website_data[url]['last_changed'] = datetime.now().isoformat()
+            self.website_data[url]['last_content'] = content[:5000]
+
+            # Determine change type and create detailed message
+            if meta_changed and content_changed:
+                change_type = "both_meta_and_content"
+                details = "Both meta information and page content changed"
+            elif meta_changed:
+                change_type = "meta_only"
+                details = self._get_meta_change_details(stored_meta_info, meta_info)
+            else:
+                change_type = "content_only"
+                details = "Page content changed (meta unchanged)"
 
             logger.info(f"✅ CHANGE detected for {url}")
-            logger.info(f"   Hash changed: {stored_hash[:8]}... → {current_hash[:8]}...")
-            logger.info(f"   Content length: {len(content)} bytes")
+            logger.info(f"   Change type: {change_type}")
+            logger.info(f"   Meta changed: {meta_changed}")
+            logger.info(f"   Content changed: {content_changed}")
+            logger.info(f"   Details: {details}")
 
-            # Get stored content for comparison (if we have it)
-            if 'last_content' in self.website_data[url]:
+            # Get content diff if we have stored content
+            if content_changed and 'last_content' in self.website_data[url]:
                 diff_sample = self.get_content_diff_sample(
                     self.website_data[url]['last_content'],
                     content
                 )
                 logger.info(f"   Content diff sample:\n{diff_sample}")
 
-            # Store current content for next comparison
-            self.website_data[url]['last_content'] = content[:5000]  # Store first 5KB for comparison
-
-            return True
+            return {
+                'changed': True,
+                'meta_changed': meta_changed,
+                'content_changed': content_changed,
+                'change_type': change_type,
+                'details': details
+            }
 
         logger.info(f"No changes detected for {url} (check #{self.website_data[url]['check_count']})")
-        return False
+        return {
+            'changed': False,
+            'meta_changed': False,
+            'content_changed': False,
+            'change_type': 'no_change',
+            'details': f"No changes detected (check #{self.website_data[url]['check_count']})"
+        }
     
-    def send_discord_notification(self, changed_urls: List[str]):
+    def send_discord_notification(self, changes: List[dict]):
         """
         Send Discord notification about changed websites.
 
         Args:
-            changed_urls: List of URLs that have changed
+            changes: List of change dictionaries with URL and change details
         """
         try:
             webhook_url = self.config['notification'].get('discord_webhook_url')
@@ -339,7 +450,7 @@ class WebsiteTracker:
             # Create Discord embed
             embed = {
                 "title": f"🔔 Website Changes Detected",
-                "description": f"**{len(changed_urls)} website(s) have been updated**",
+                "description": f"**{len(changes)} website(s) have been updated**",
                 "color": 0x00ff00,  # Green color
                 "timestamp": datetime.now().isoformat(),
                 "fields": [],
@@ -348,29 +459,48 @@ class WebsiteTracker:
                 }
             }
 
-            # Add changed URLs as fields
-            for i, url in enumerate(changed_urls[:10]):  # Limit to 10 URLs to avoid Discord limits
+            # Add changed URLs as fields with detailed change information
+            for i, change in enumerate(changes[:10]):  # Limit to 10 URLs to avoid Discord limits
+                url = change['url']
+                change_info = change['change_info']
+
                 last_changed = self.website_data[url].get('last_changed', 'Unknown')
                 check_count = self.website_data[url].get('check_count', 0)
                 content_length = self.website_data[url].get('content_length', 0)
 
-                # Show more detailed information
+                # Determine emoji based on change type
+                if change_info['change_type'] == 'meta_only':
+                    emoji = "📝"
+                    change_desc = "Meta information changed"
+                elif change_info['change_type'] == 'content_only':
+                    emoji = "📄"
+                    change_desc = "Page content changed"
+                elif change_info['change_type'] == 'both_meta_and_content':
+                    emoji = "🔄"
+                    change_desc = "Both meta and content changed"
+                else:
+                    emoji = "🌐"
+                    change_desc = "Website changed"
+
+                # Show detailed information
+                field_value = f"**URL:** {url}\n**Type:** {change_desc}\n**Details:** {change_info['details'][:100]}...\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}"
+
                 embed["fields"].append({
-                    "name": f"🌐 Website {i+1}",
-                    "value": f"**URL:** {url}\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}",
+                    "name": f"{emoji} Website {i+1}",
+                    "value": field_value,
                     "inline": False
                 })
 
-            if len(changed_urls) > 10:
+            if len(changes) > 10:
                 embed["fields"].append({
                     "name": "📝 Note",
-                    "value": f"... and {len(changed_urls) - 10} more websites",
+                    "value": f"... and {len(changes) - 10} more websites",
                     "inline": False
                 })
 
             # Prepare Discord webhook payload
             payload = {
-                "content": f"🚨 **{len(changed_urls)} website(s) changed!**",
+                "content": f"🚨 **{len(changes)} website(s) changed!**",
                 "embeds": [embed]
             }
 
@@ -386,7 +516,7 @@ class WebsiteTracker:
             logger.info(f"Discord API response: {response.status_code}")
 
             if response.status_code == 204:
-                logger.info(f"✅ Discord notification sent successfully for {len(changed_urls)} changed websites")
+                logger.info(f"✅ Discord notification sent successfully for {len(changes)} changed websites")
                 return True
             else:
                 logger.error(f"Discord API error: {response.status_code} - {response.text}")
@@ -633,8 +763,28 @@ This is an automated heartbeat message from your Website Tracker.
         notification_type = self.config['notification'].get('type', 'discord')
 
         if notification_type == 'discord':
-            self.send_discord_notification(changed_urls)
+            # Convert to old format for backward compatibility
+            changes = [{'url': url, 'change_info': {'change_type': 'unknown', 'details': 'Website changed'}} for url in changed_urls]
+            self.send_discord_notification(changes)
         elif notification_type == 'email':
+            self.send_email_notification(changed_urls)
+        else:
+            logger.error(f"Unknown notification type: {notification_type}")
+
+    def send_notification_with_details(self, changes: List[dict]):
+        """
+        Send notification about changed websites with detailed change information.
+
+        Args:
+            changes: List of change dictionaries with URL and change details
+        """
+        notification_type = self.config['notification'].get('type', 'discord')
+
+        if notification_type == 'discord':
+            self.send_discord_notification(changes)
+        elif notification_type == 'email':
+            # Convert to old format for email notifications
+            changed_urls = [change['url'] for change in changes]
             self.send_email_notification(changed_urls)
         else:
             logger.error(f"Unknown notification type: {notification_type}")
@@ -642,39 +792,44 @@ This is an automated heartbeat message from your Website Tracker.
     def track_websites(self) -> List[str]:
         """
         Track all configured websites for changes.
-        
+
         Returns:
             List of URLs that have changed
         """
-        changed_urls = []
+        changes = []
         urls = self.config.get('urls', [])
-        
+
         if not urls:
             logger.warning("No URLs configured for tracking")
-            return changed_urls
-        
+            return []
+
         logger.info(f"Starting to track {len(urls)} websites")
-        
+
         for url in urls:
             try:
-                if self.check_website_changes(url):
-                    changed_urls.append(url)
+                change_info = self.check_website_changes(url)
+                if change_info['changed']:
+                    changes.append({
+                        'url': url,
+                        'change_info': change_info
+                    })
                 # Small delay between requests to be respectful
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Error checking {url}: {e}")
-        
+
         # Save updated data
         self.save_website_data()
-        
+
         # Send notification if changes detected
-        if changed_urls:
-            self.send_notification(changed_urls)
-            logger.info(f"Tracking complete. {len(changed_urls)} websites changed.")
+        if changes:
+            self.send_notification_with_details(changes)
+            logger.info(f"Tracking complete. {len(changes)} websites changed.")
         else:
             logger.info("Tracking complete. No changes detected.")
-        
-        return changed_urls
+
+        # Return list of changed URLs for backward compatibility
+        return [change['url'] for change in changes]
     
     def add_url(self, url: str):
         """Add a URL to the tracking list."""
