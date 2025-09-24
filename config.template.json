@@ -15,6 +15,9 @@
     "notification": {
         "type": "discord",
         "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+        "discord_user_mentions": [
+            "123456789012345678"
+        ],
         "email": {
             "smtp_server": "smtp.gmail.com",
             "smtp_port": 587,

@@ -687,9 +687,18 @@ class WebsiteTracker:
                     "inline": False
                 })
 
-            # Prepare Discord webhook payload
+            # Prepare Discord webhook payload with user mentions for changes
+            user_mentions = self.config['notification'].get('discord_user_mentions', [])
+            mention_text = ""
+
+            if user_mentions:
+                # Create mention string for users
+                mentions = [f"<@{user_id}>" for user_id in user_mentions if user_id and str(user_id).isdigit()]
+                if mentions:
+                    mention_text = " " + " ".join(mentions)
+
             payload = {
-                "content": f"🚨 **{len(changes)} website(s) changed!**",
+                "content": f"🚨 **{len(changes)} website(s) changed!**{mention_text}",
                 "embeds": [embed]
             }
 
