@@ -124,32 +124,42 @@ class WebsiteTracker:
         except Exception as e:
             logger.error(f"Error saving website data: {e}")
     
-    def get_website_content(self, url: str) -> Optional[str]:
+    def get_website_content(self, url: str, return_response: bool = False):
         """
         Fetch website content.
-        
+
         Args:
             url: The URL to fetch
-            
+            return_response: If True, return (content, response) tuple
+
         Returns:
             The website content as string, or None if failed
+            If return_response=True, returns (content, response) tuple
         """
         try:
             headers = {
                 'User-Agent': self.config.get('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             }
-            
+
             response = requests.get(
-                url, 
+                url,
                 headers=headers,
-                timeout=self.config.get('request_timeout', 30)
+                timeout=self.config.get('request_timeout', 30),
+                allow_redirects=True  # Enable redirect following for domain change detection
             )
             response.raise_for_status()
-            return response.text
-            
+
+            if return_response:
+                return response.text, response
+            else:
+                return response.text
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching {url}: {e}")
-            return None
+            if return_response:
+                return None, None
+            else:
+                return None
     
     def normalize_content(self, content: str) -> str:
         """
@@ -522,6 +532,64 @@ class WebsiteTracker:
 
         return grouped
 
+    def check_domain_changes(self, url: str, response) -> dict:
+        """
+        Check if a website has moved to a new domain.
+
+        Args:
+            url: Original URL being checked
+            response: HTTP response object
+
+        Returns:
+            Dictionary with domain change information
+        """
+        domain_info = {
+            'domain_changed': False,
+            'original_domain': '',
+            'new_domain': '',
+            'redirect_chain': [],
+            'final_url': url
+        }
+
+        try:
+            from urllib.parse import urlparse
+
+            original_parsed = urlparse(url)
+            original_domain = f"{original_parsed.scheme}://{original_parsed.netloc}"
+            domain_info['original_domain'] = original_domain
+
+            # Check if there were redirects
+            if hasattr(response, 'history') and response.history:
+                # Build redirect chain
+                redirect_chain = []
+                for redirect in response.history:
+                    redirect_chain.append({
+                        'url': redirect.url,
+                        'status_code': redirect.status_code
+                    })
+
+                redirect_chain.append({
+                    'url': response.url,
+                    'status_code': response.status_code
+                })
+
+                domain_info['redirect_chain'] = redirect_chain
+                domain_info['final_url'] = response.url
+
+                # Check if final domain is different
+                final_parsed = urlparse(response.url)
+                final_domain = f"{final_parsed.scheme}://{final_parsed.netloc}"
+                domain_info['new_domain'] = final_domain
+
+                if original_domain.lower() != final_domain.lower():
+                    domain_info['domain_changed'] = True
+                    logger.info(f"Domain change detected: {original_domain} → {final_domain}")
+
+        except Exception as e:
+            logger.error(f"Error checking domain changes for {url}: {e}")
+
+        return domain_info
+
     def check_website_changes(self, url: str) -> dict:
         """
         Check if a website has changed, distinguishing between meta and content changes.
@@ -540,16 +608,21 @@ class WebsiteTracker:
         """
         logger.info(f"Checking {url}")
 
-        content = self.get_website_content(url)
-        if content is None:
+        # Fetch content and response for domain change detection
+        content, response = self.get_website_content(url, return_response=True)
+        if content is None or response is None:
             logger.warning(f"Could not fetch content for {url}")
             return {
                 'changed': False,
                 'meta_changed': False,
                 'content_changed': False,
                 'change_type': 'error',
-                'details': 'Could not fetch content'
+                'details': 'Could not fetch content',
+                'domain_info': None
             }
+
+        # Check for domain changes
+        domain_info = self.check_domain_changes(url, response)
 
         # Extract meta information and calculate hashes
         meta_info = self.extract_meta_info(content)
@@ -582,7 +655,8 @@ class WebsiteTracker:
                 'meta_changed': False,
                 'content_changed': False,
                 'change_type': 'first_time',
-                'details': 'Baseline established'
+                'details': 'Baseline established',
+                'domain_info': domain_info
             }
 
         # Get stored hashes
@@ -646,6 +720,14 @@ class WebsiteTracker:
                 )
                 logger.info(f"   Content diff sample:\n{diff_sample}")
 
+            # Add domain change information to details if domain changed
+            if domain_info['domain_changed']:
+                domain_change_msg = f"\n\n🌐 **Domain Change Detected!**\n"
+                domain_change_msg += f"   Original: {domain_info['original_domain']}\n"
+                domain_change_msg += f"   New: {domain_info['new_domain']}\n"
+                domain_change_msg += f"   Redirect chain: {len(domain_info['redirect_chain'])} step(s)"
+                details += domain_change_msg
+
             return {
                 'changed': True,
                 'meta_changed': meta_changed,
@@ -653,7 +735,21 @@ class WebsiteTracker:
                 'change_type': change_type,
                 'details': details,
                 'before_snapshot': before_snapshot,
-                'after_snapshot': current_snapshot
+                'after_snapshot': current_snapshot,
+                'domain_info': domain_info
+            }
+
+        # Check if domain changed even without content changes
+        if domain_info['domain_changed']:
+            logger.info(f"🌐 Domain change detected for {url} (no content changes)")
+            domain_change_details = f"Domain moved from {domain_info['original_domain']} to {domain_info['new_domain']}"
+            return {
+                'changed': True,
+                'meta_changed': False,
+                'content_changed': False,
+                'change_type': 'domain_change',
+                'details': domain_change_details,
+                'domain_info': domain_info
             }
 
         logger.info(f"No changes detected for {url} (check #{self.website_data[url]['check_count']})")
@@ -662,7 +758,8 @@ class WebsiteTracker:
             'meta_changed': False,
             'content_changed': False,
             'change_type': 'no_change',
-            'details': f"No changes detected (check #{self.website_data[url]['check_count']})"
+            'details': f"No changes detected (check #{self.website_data[url]['check_count']})",
+            'domain_info': domain_info
         }
     
     def send_discord_notification(self, changes: List[dict]):
@@ -721,6 +818,8 @@ class WebsiteTracker:
                         emoji = "📄"
                     elif change_info['change_type'] == 'both_meta_and_content':
                         emoji = "🔄"
+                    elif change_info['change_type'] == 'domain_change':
+                        emoji = "🌐➡️"  # Special emoji for domain changes
                     else:
                         emoji = "🌐"
 
@@ -940,16 +1039,13 @@ This is an automated message from your Website Tracker.
                     # Create emoji for group
                     group_emoji = "🎯" if "lb33my" in group_key.lower() else "🎮" if "gamebet" in group_key.lower() else "🌐"
 
-                    # Show sample URLs from this group
+                    # Show ALL URLs from this group (no truncation)
                     url_samples = []
-                    for url in group_urls[:3]:  # Show first 3 URLs
+                    for url in group_urls:  # Show ALL URLs
                         display_url = url.replace('https://www.', '').replace('https://', '')
                         if len(display_url) > 45:
                             display_url = display_url[:42] + '...'
                         url_samples.append(f"• {display_url}")
-
-                    if len(group_urls) > 3:
-                        url_samples.append(f"• ... and {len(group_urls) - 3} more")
 
                     embed["fields"].append({
                         "name": f"{group_emoji} {group_name} ({len(group_urls)} sites)",
