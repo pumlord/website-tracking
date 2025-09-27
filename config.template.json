@@ -1,17 +1,32 @@
 {
-    "urls": [
-        "https://www.business2communitymalaysia.com/en/gambling/online-baccarat-malaysia",
-        "https://www.business2communitymalaysia.com/en/gambling/online-blackjack",
-        "https://www.business2communitymalaysia.com/en/gambling/fishing-games",
-        "https://www.business2communitymalaysia.com/en/gambling/online-roulette-malaysia",
-        "https://www.business2communitymalaysia.com/en/gambling/12play-review",
-        "https://www.business2communitymalaysia.com/en/gambling/aw8-review",
-        "https://www.business2communitymalaysia.com/en/gambling/md88-review",
-        "https://www.business2communitymalaysia.com/en/gambling/football-betting",
-        "https://www.business2communitymalaysia.com/en/gambling/esports-betting",
-        "https://www.business2communitymalaysia.com/en/gambling/live-blackjack-malaysia",
-        "https://www.business2communitymalaysia.com/en/gambling/live-craps-casinos-malaysia"
-    ],
+    "website_groups": {
+        "gamebetreview.com": {
+            "name": "GameBet Review Sites",
+            "urls": [
+                "https://www.business2communitymalaysia.com/en/gambling/online-baccarat-malaysia",
+                "https://www.business2communitymalaysia.com/en/gambling/online-blackjack",
+                "https://www.business2communitymalaysia.com/en/gambling/fishing-games",
+                "https://www.business2communitymalaysia.com/en/gambling/online-roulette-malaysia",
+                "https://www.business2communitymalaysia.com/en/gambling/12play-review",
+                "https://www.business2communitymalaysia.com/en/gambling/aw8-review",
+                "https://www.business2communitymalaysia.com/en/gambling/md88-review",
+                "https://www.business2communitymalaysia.com/en/gambling/football-betting",
+                "https://www.business2communitymalaysia.com/en/gambling/esports-betting",
+                "https://www.business2communitymalaysia.com/en/gambling/live-blackjack-malaysia",
+                "https://www.business2communitymalaysia.com/en/gambling/live-craps-casinos-malaysia"
+            ]
+        },
+        "lb33my.com": {
+            "name": "LB33 Malaysia Sites",
+            "urls": [
+                "https://www.bk8.services/sports/",
+                "https://www.bk8.services/live-casino/",
+                "https://www.bk8.services/slots/",
+                "https://www.bk8.services/fishing/",
+                "https://www.bk8.services/fast-games/"
+            ]
+        }
+    },
     "notification": {
         "type": "discord",
         "discord_webhook_url": "YOUR_DISCORD_WEBHOOK_URL_HERE",

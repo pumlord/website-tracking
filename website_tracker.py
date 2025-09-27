@@ -22,7 +22,7 @@ class WebsiteTracker:
     def __init__(self, config_file: str = 'config.json'):
         """
         Initialize the website tracker.
-        
+
         Args:
             config_file: Path to the configuration file
         """
@@ -30,7 +30,42 @@ class WebsiteTracker:
         self.data_file = 'website_data.json'
         self.config = self.load_config()
         self.website_data = self.load_website_data()
-        
+
+        # Process grouped URLs for backward compatibility
+        self._process_url_groups()
+
+    def _process_url_groups(self):
+        """Process website groups and create a flat URL list for backward compatibility."""
+        if 'website_groups' in self.config:
+            # New grouped format
+            all_urls = []
+            self.url_groups = {}
+
+            for group_key, group_data in self.config['website_groups'].items():
+                group_name = group_data.get('name', group_key)
+                group_urls = group_data.get('urls', [])
+
+                # Store group information
+                self.url_groups[group_key] = {
+                    'name': group_name,
+                    'urls': group_urls
+                }
+
+                # Add to flat list for backward compatibility
+                all_urls.extend(group_urls)
+
+            # Set the flat URL list for existing code compatibility
+            self.config['urls'] = all_urls
+        else:
+            # Legacy format - create a single default group
+            urls = self.config.get('urls', [])
+            self.url_groups = {
+                'default': {
+                    'name': 'Default Group',
+                    'urls': urls
+                }
+            }
+
     def load_config(self) -> Dict:
         """Load configuration from file."""
         default_config = {
@@ -457,6 +492,36 @@ class WebsiteTracker:
 
         return "; ".join(changes) if changes else "Meta information changed"
 
+    def _group_changes_by_website(self, changes: List[dict]) -> dict:
+        """Group changes by website groups for better organization."""
+        grouped = {}
+
+        for change in changes:
+            url = change['url']
+            group_key = None
+            group_name = "Unknown Group"
+
+            # Find which group this URL belongs to
+            for gkey, gdata in getattr(self, 'url_groups', {}).items():
+                if url in gdata['urls']:
+                    group_key = gkey
+                    group_name = gdata['name']
+                    break
+
+            if not group_key:
+                group_key = 'ungrouped'
+                group_name = 'Ungrouped Sites'
+
+            if group_key not in grouped:
+                grouped[group_key] = {
+                    'name': group_name,
+                    'changes': []
+                }
+
+            grouped[group_key]['changes'].append(change)
+
+        return grouped
+
     def check_website_changes(self, url: str) -> dict:
         """
         Check if a website has changed, distinguishing between meta and content changes.
@@ -619,10 +684,13 @@ class WebsiteTracker:
                 logger.error(f"Invalid Discord webhook URL format: {webhook_url[:50]}...")
                 return False
 
+            # Group changes by website groups
+            grouped_changes = self._group_changes_by_website(changes)
+
             # Create Discord embed
             embed = {
                 "title": f"🔔 Website Changes Detected",
-                "description": f"**{len(changes)} website(s) have been updated**",
+                "description": f"**{len(changes)} website(s) have been updated across {len(grouped_changes)} group(s)**",
                 "color": 0x00ff00,  # Green color
                 "timestamp": datetime.now().isoformat(),
                 "fields": [],
@@ -631,61 +699,73 @@ class WebsiteTracker:
                 }
             }
 
-            # Add changed URLs as fields with detailed change information
-            for i, change in enumerate(changes[:10]):  # Limit to 10 URLs to avoid Discord limits
-                url = change['url']
-                change_info = change['change_info']
+            # Add grouped changes as fields
+            field_count = 0
+            for group_key, group_data in grouped_changes.items():
+                group_name = group_data['name']
+                group_changes = group_data['changes']
 
-                last_changed = self.website_data[url].get('last_changed', 'Unknown')
-                check_count = self.website_data[url].get('check_count', 0)
-                content_length = self.website_data[url].get('content_length', 0)
+                # Create a field for each group
+                group_emoji = "🎯" if "lb33my" in group_key.lower() else "🎮" if "gamebet" in group_key.lower() else "🌐"
 
-                # Determine emoji based on change type
-                if change_info['change_type'] == 'meta_only':
-                    emoji = "📝"
-                    change_desc = "Meta information changed"
-                elif change_info['change_type'] == 'content_only':
-                    emoji = "📄"
-                    change_desc = "Page content changed"
-                elif change_info['change_type'] == 'both_meta_and_content':
-                    emoji = "🔄"
-                    change_desc = "Both meta and content changed"
-                else:
-                    emoji = "🌐"
-                    change_desc = "Website changed"
+                # Create summary of changes in this group
+                change_summaries = []
+                for change in group_changes:
+                    url = change['url']
+                    change_info = change['change_info']
 
-                # Show detailed information with snapshot data
-                details = change_info['details']
-
-                # Truncate details for Discord field limits, but keep snapshot info readable
-                if len(details) > 800:
-                    # Find a good break point to keep snapshot info intact
-                    if "📸 Content Changes:" in details:
-                        snapshot_start = details.find("📸 Content Changes:")
-                        if snapshot_start > 0:
-                            # Keep the first part and the snapshot comparison
-                            first_part = details[:min(400, snapshot_start)].strip()
-                            snapshot_part = details[snapshot_start:snapshot_start+400].strip()
-                            details = f"{first_part}\n\n{snapshot_part}..."
-                        else:
-                            details = details[:800] + "..."
+                    # Determine emoji based on change type
+                    if change_info['change_type'] == 'meta_only':
+                        emoji = "📝"
+                    elif change_info['change_type'] == 'content_only':
+                        emoji = "📄"
+                    elif change_info['change_type'] == 'both_meta_and_content':
+                        emoji = "🔄"
                     else:
-                        details = details[:800] + "..."
+                        emoji = "🌐"
 
-                field_value = f"**URL:** {url}\n**Type:** {change_desc}\n**Details:** {details}\n**Changed:** {last_changed}\n**Size:** {content_length:,} bytes • **Checks:** {check_count}"
+                    # Shorten URL for display
+                    display_url = url.replace('https://www.', '').replace('https://', '')
+                    if len(display_url) > 60:
+                        display_url = display_url[:57] + '...'
+
+                    # Get key details
+                    last_changed = self.website_data[url].get('last_changed', 'Unknown')
+                    if isinstance(last_changed, str) and 'T' in last_changed:
+                        # Format datetime string to be more readable
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(last_changed.replace('Z', '+00:00'))
+                            last_changed = dt.strftime('%H:%M')
+                        except:
+                            last_changed = 'Now'
+
+                    # Create concise summary
+                    change_summaries.append(f"{emoji} **{display_url}** - {last_changed}")
+
+                # Create field value with all changes in this group
+                field_value = f"**{len(group_changes)} change(s) detected:**\n" + "\n".join(change_summaries)
+
+                # Ensure field value doesn't exceed Discord limits (1024 chars)
+                if len(field_value) > 1000:
+                    # Truncate but show count
+                    truncated_summaries = change_summaries[:3]  # Show first 3
+                    remaining = len(change_summaries) - 3
+                    field_value = f"**{len(group_changes)} change(s) detected:**\n" + "\n".join(truncated_summaries)
+                    if remaining > 0:
+                        field_value += f"\n... and {remaining} more changes"
 
                 embed["fields"].append({
-                    "name": f"{emoji} Website {i+1}",
+                    "name": f"{group_emoji} {group_name}",
                     "value": field_value,
                     "inline": False
                 })
 
-            if len(changes) > 10:
-                embed["fields"].append({
-                    "name": "📝 Note",
-                    "value": f"... and {len(changes) - 10} more websites",
-                    "inline": False
-                })
+                field_count += 1
+
+                # Discord has a limit of 25 fields per embed
+                if field_count >= 25:
+                    break
 
             # Prepare Discord webhook payload with user mentions for changes
             user_mentions = self.config['notification'].get('discord_user_mentions', [])
@@ -820,10 +900,13 @@ This is an automated message from your Website Tracker.
                 logger.error(f"Invalid Discord webhook URL format: {webhook_url[:50]}...")
                 return False
 
-            # Create Discord embed for heartbeat
+            # Create Discord embed for heartbeat with grouped information
+            total_urls = len(self.config.get('urls', []))
+            total_groups = len(getattr(self, 'url_groups', {}))
+
             embed = {
                 "title": "✅ Website Tracker Heartbeat",
-                "description": f"**Monitoring {len(self.config['urls'])} websites - No changes detected**",
+                "description": f"**Monitoring {total_urls} websites across {total_groups} group(s) - No changes detected**",
                 "color": 0x0099ff,  # Blue color
                 "timestamp": datetime.now().isoformat(),
                 "fields": [
@@ -833,8 +916,8 @@ This is an automated message from your Website Tracker.
                         "inline": True
                     },
                     {
-                        "name": "🌐 Websites Monitored",
-                        "value": str(len(self.config['urls'])),
+                        "name": "🌐 Total Websites",
+                        "value": str(total_urls),
                         "inline": True
                     },
                     {
@@ -848,24 +931,31 @@ This is an automated message from your Website Tracker.
                 }
             }
 
-            # Add some example URLs being monitored
-            if self.config.get('urls'):
-                url_list = []
-                for i, url in enumerate(self.config['urls'][:5]):
-                    # Shorten URLs for display
-                    display_url = url.replace('https://www.', '').replace('https://', '')
-                    if len(display_url) > 50:
-                        display_url = display_url[:47] + '...'
-                    url_list.append(f"• {display_url}")
+            # Add grouped website information
+            if hasattr(self, 'url_groups') and self.url_groups:
+                for group_key, group_data in self.url_groups.items():
+                    group_name = group_data['name']
+                    group_urls = group_data['urls']
 
-                if len(self.config['urls']) > 5:
-                    url_list.append(f"• ... and {len(self.config['urls']) - 5} more")
+                    # Create emoji for group
+                    group_emoji = "🎯" if "lb33my" in group_key.lower() else "🎮" if "gamebet" in group_key.lower() else "🌐"
 
-                embed["fields"].append({
-                    "name": "📋 Sample Monitored Sites",
-                    "value": "\n".join(url_list),
-                    "inline": False
-                })
+                    # Show sample URLs from this group
+                    url_samples = []
+                    for url in group_urls[:3]:  # Show first 3 URLs
+                        display_url = url.replace('https://www.', '').replace('https://', '')
+                        if len(display_url) > 45:
+                            display_url = display_url[:42] + '...'
+                        url_samples.append(f"• {display_url}")
+
+                    if len(group_urls) > 3:
+                        url_samples.append(f"• ... and {len(group_urls) - 3} more")
+
+                    embed["fields"].append({
+                        "name": f"{group_emoji} {group_name} ({len(group_urls)} sites)",
+                        "value": "\n".join(url_samples),
+                        "inline": False
+                    })
 
             # Prepare Discord webhook payload
             payload = {
